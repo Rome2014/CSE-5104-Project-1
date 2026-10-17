@@ -1,0 +1,570 @@
+---
+title: "Project 1 Section 1"
+author: "Yuan Fan, Ezra Lin, Rong Bao"
+date: "2026-10-02"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+# 1.1: Data Preparation
+```{r}
+library(readxl)
+
+data_file <- file.path(
+  "concrete+compressive+strength",
+  "Concrete_Data.xls"
+)
+data <- as.data.frame(read_excel(data_file))
+
+colnames(data) <- c("Cement", "Slag", "FlyAsh", "Water",
+                    "Superplasticizer", "CoarseAggregate",
+                    "FineAggregate", "Age", "Strength")
+
+test_data <- data[501:630, ]
+train_data <- data[-(501:630), ]
+
+cat("Training samples:", nrow(train_data), "\n")
+cat("Testing samples:", nrow(test_data), "\n")
+
+x_train <- as.matrix(train_data[, 1:8])
+x_test <- as.matrix(test_data[, 1:8])
+
+y_train <- train_data$Strength
+y_test <- test_data$Strength
+
+output_dir <- "projects_results"
+dir.create(output_dir, showWarnings = FALSE,
+           recursive = TRUE)
+
+
+```
+
+
+# 1.2: Gradient Descent Implementation
+```{r}
+gradient_descent <- function(x, y, lr = 0.01,
+                             max_iter = 10000) {
+  x <- cbind(Intercept = 1, as.matrix(x))
+
+  n <- nrow(x)
+  beta <- rep(0, ncol(x))
+  losses <- numeric(max_iter)
+
+  for (i in 1:max_iter) {
+
+    y_pred <- as.vector(x %*% beta)
+
+    error <- y_pred - y
+    losses[i] <- mean(error^2)
+
+    gradient <- (2 / n) * as.vector(t(x) %*% error)
+
+    beta <- beta - lr * gradient
+
+    if (any(!is.finite(beta))) {
+      losses <- losses[1:i]
+      break
+    }
+  }
+
+  if (all(is.finite(beta))) {
+    final_pred <- as.vector(x %*% beta)
+    losses <- c(losses, mean((y - final_pred)^2))
+  }
+
+  return(list(beta = beta, loss = losses))
+}
+
+evaluate_model <- function(x, y, beta) {
+
+  x <- cbind(1, x)
+  pred <- as.vector(x %*% beta)
+
+  mse <- mean((y - pred)^2)
+  r2 <- 1 - mse / mean((y - mean(y))^2)
+
+  return(c(MSE = mse, R2 = r2))
+}
+
+
+evaluate_lm <- function(model, data) {
+
+  pred <- predict(model, newdata = data)
+  y <- data$Strength
+
+  mse <- mean((y - pred)^2)
+  r2 <- 1 - mse / mean((y - mean(y))^2)
+
+  return(c(MSE = mse, R2 = r2))
+}
+
+```
+
+
+
+# 1.3: Scaling & Convergence Speed
+```{r}
+model_raw <- gradient_descent(
+  x_train,
+  y_train,
+  lr = 0.00000001,
+  max_iter = 100000
+)
+
+raw_result <- evaluate_model(
+  x_train, y_train, model_raw$beta
+)
+
+cat("\nRaw Feature Results:\n")
+print(raw_result)
+
+train_mean <- colMeans(x_train)
+train_sd <- apply(x_train, 2, sd)
+
+x_train_scaled <- scale(
+  x_train,
+  center = train_mean,
+  scale = train_sd
+)
+
+x_test_scaled <- scale(
+  x_test,
+  center = train_mean,
+  scale = train_sd
+)
+
+model_scaled <- gradient_descent(
+  x_train_scaled,
+  y_train,
+  lr = 0.01,
+  max_iter = 10000
+)
+
+scaled_result <- evaluate_model(
+  x_train_scaled, y_train, model_scaled$beta
+)
+
+cat("\nScaled Feature Results:\n")
+print(scaled_result)
+
+plot(
+  seq_along(model_raw$loss),
+  model_raw$loss,
+  type = "l",
+  col = "red",
+  lwd = 2,
+  log = "x",
+  xlab = "Iteration (log scale)",
+  ylab = "Mean Squared Error",
+  main = "Gradient Descent Convergence"
+)
+
+lines(
+  seq_along(model_scaled$loss),
+  model_scaled$loss,
+  col = "blue",
+  lwd = 2
+)
+
+legend(
+  "topright",
+  legend = c("Raw Features", "Standardized Features"),
+  col = c("red", "blue"),
+  lwd = 2
+)
+
+png(file.path(output_dir, "Figure1_Scaling.png"),
+    width = 900, height = 650)
+
+plot(seq_along(model_raw$loss), model_raw$loss,
+     type = "l", col = "red", lwd = 2,
+     log = "x", xlab = "Iteration (log scale)",
+     ylab = "MSE", main = "Scaling and Convergence")
+
+lines(seq_along(model_scaled$loss),
+      model_scaled$loss, col = "blue", lwd = 2)
+
+legend("topright",
+       legend = c("Raw", "Standardized"),
+       col = c("red", "blue"), lwd = 2)
+
+dev.off()
+
+
+#  Q3 training settings and final scores.
+export_gd_summary <- function(model, label, lr, max_iter, y) {
+  variance_y <- mean((y - mean(y))^2)
+  finite_beta <- all(is.finite(model$beta))
+  finite_run <- finite_beta && all(is.finite(model$loss))
+  positive <- which(is.finite(model$loss) & model$loss < variance_y)
+  final_mse <- if (finite_run) tail(model$loss, 1) else NA_real_
+  data.frame(
+    Model = label, Learning_Rate = lr, Max_Iterations = max_iter,
+    Updates = if (finite_beta) length(model$loss) - 1L else length(model$loss),
+    Status = if (finite_run) "finite" else "non-finite",
+    Final_Train_MSE = final_mse,
+    Final_Train_R2 = 1 - final_mse / variance_y,
+    First_Positive_R2_Iteration =
+      if (length(positive)) positive[1] - 1L else NA_integer_
+  )
+}
+q3_gd_results <- rbind(
+  export_gd_summary(model_raw, "Raw", 1e-8, 100000, y_train),
+  export_gd_summary(model_scaled, "Standardized", 0.01, 10000, y_train)
+)
+write.csv(q3_gd_results, file.path(output_dir, "Q3_GD_Results.csv"),
+          row.names = FALSE)
+
+# Loss histories; record 1 corresponds to zero updates.
+export_loss_table <- function(model, label) {
+  data.frame(Model = label, Updates = seq_along(model$loss) - 1L,
+             Train_MSE = model$loss)
+}
+write.csv(rbind(export_loss_table(model_raw, "Raw"),
+                export_loss_table(model_scaled, "Standardized")),
+          file.path(output_dir, "Q3_Loss_History.csv"), row.names = FALSE)
+
+# training-only scaling parameters.
+write.csv(data.frame(Feature = names(train_mean),
+                     Training_Mean = unname(train_mean),
+                     Training_SD = unname(train_sd)),
+          file.path(output_dir, "Training_Scaling_Parameters.csv"),
+          row.names = FALSE)
+
+```
+
+
+# 1.4: Scaling & The Optimal Solution
+```{r}
+lm_raw <- lm(Strength ~ ., data = train_data)
+
+train_scaled <- as.data.frame(x_train_scaled)
+train_scaled$Strength <- y_train
+
+lm_scaled <- lm(Strength ~ ., data = train_scaled)
+
+raw_mse <- mean(residuals(lm_raw)^2)
+scaled_mse <- mean(residuals(lm_scaled)^2)
+
+raw_r2 <- summary(lm_raw)$r.squared
+scaled_r2 <- summary(lm_scaled)$r.squared
+
+print(data.frame(
+  Model = c("Raw", "Standardized"),
+  MSE = c(raw_mse, scaled_mse),
+  R2 = c(raw_r2, scaled_r2)
+))
+
+max(abs(fitted(lm_raw) - fitted(lm_scaled)))
+
+
+# Optimal-model scores and fitted-value agreement.
+write.csv(data.frame(Model = c("Raw", "Standardized"),
+                     Train_MSE = c(raw_mse, scaled_mse),
+                     Train_R2 = c(raw_r2, scaled_r2)),
+          file.path(output_dir, "Q4_Scaling_Optimal_Results.csv"),
+          row.names = FALSE)
+write.csv(data.frame(Max_Absolute_Fitted_Difference =
+                       max(abs(fitted(lm_raw) - fitted(lm_scaled)))),
+          file.path(output_dir, "Q4_Fitted_Difference.csv"),
+          row.names = FALSE)
+
+```
+
+
+# 1.5: Non-Linear Transformations
+```{r}
+lm_raw <- lm(Strength ~ ., data = train_data)
+
+train_scaled <- as.data.frame(x_train_scaled)
+test_scaled <- as.data.frame(x_test_scaled)
+
+train_scaled$Strength <- y_train
+test_scaled$Strength <- y_test
+
+lm_scaled <- lm(Strength ~ ., data = train_scaled)
+
+x_train_log <- log1p(x_train)
+x_test_log <- log1p(x_test)
+
+model_log <- gradient_descent(
+  x_train_log,
+  y_train,
+  lr = 0.00001,
+  max_iter = 50000
+)
+
+train_log <- as.data.frame(x_train_log)
+test_log <- as.data.frame(x_test_log)
+
+train_log$Strength <- y_train
+test_log$Strength <- y_test
+
+lm_log <- lm(Strength ~ ., data = train_log)
+
+get_scores <- function(model, dataset) {
+  actual <- dataset$Strength
+  predicted <- predict(model, newdata = dataset)
+
+  mse <- mean((actual - predicted)^2)
+  r2 <- 1 - mse / mean((actual - mean(actual))^2)
+
+  return(c(MSE = mse, R2 = r2))
+}
+
+raw_train <- get_scores(lm_raw, train_data)
+scaled_train <- get_scores(lm_scaled, train_scaled)
+log_train <- get_scores(lm_log, train_log)
+
+raw_test <- get_scores(lm_raw, test_data)
+scaled_test <- get_scores(lm_scaled, test_scaled)
+log_test <- get_scores(lm_log, test_log)
+
+q_results <- data.frame(
+  Model = c("Raw", "Standardized", "Log"),
+  Train_MSE = c(raw_train["MSE"],
+                scaled_train["MSE"],
+                log_train["MSE"]),
+  Test_MSE = c(raw_test["MSE"],
+               scaled_test["MSE"],
+               log_test["MSE"]),
+  Train_R2 = c(raw_train["R2"],
+               scaled_train["R2"],
+               log_train["R2"]),
+  Test_R2 = c(raw_test["R2"],
+              scaled_test["R2"],
+              log_test["R2"])
+)
+
+print(q_results)
+
+plot(model_raw$loss, type = "l", col = "red",
+     log = "x", xlab = "Iterations", ylab = "MSE",
+     main = "Gradient Descent Convergence")
+
+lines(model_scaled$loss, col = "blue")
+lines(model_log$loss, col = "green")
+
+legend("topright",
+       legend = c("Raw", "Standardized", "Log"),
+       col = c("red", "blue", "green"), lty = 1)
+
+
+# All three optimal models' training and testing scores.
+write.csv(q_results, file.path(output_dir, "Q5_Model_Performance.csv"),
+          row.names = FALSE)
+
+# Multivariate GD diagnostics and complete loss histories.
+q5_gd_results <- rbind(
+  q3_gd_results,
+  export_gd_summary(model_log, "Log", 1e-5, 50000, y_train)
+)
+write.csv(q5_gd_results, file.path(output_dir, "Q3_Q5_GD_Results.csv"),
+          row.names = FALSE)
+write.csv(rbind(export_loss_table(model_raw, "Raw"),
+                export_loss_table(model_scaled, "Standardized"),
+                export_loss_table(model_log, "Log")),
+          file.path(output_dir, "Q3_Q5_Loss_History.csv"), row.names = FALSE)
+
+# Coefficient estimates and inference for the optimal models.
+export_coefficient_table <- function(model, label) {
+  s <- summary(model)$coefficients
+  data.frame(Model = label, Term = rownames(s),
+             Estimate = s[, 1], Standard_Error = s[, 2],
+             T_Statistic = s[, 3], P_Value = s[, 4], row.names = NULL)
+}
+write.csv(rbind(export_coefficient_table(lm_raw, "Raw"),
+                export_coefficient_table(lm_scaled, "Standardized"),
+                export_coefficient_table(lm_log, "Log")),
+          file.path(output_dir, "Optimal_Model_Coefficients.csv"),
+          row.names = FALSE)
+
+# Save the three-model loss plot; the x-axis uses loss record indices.
+png(file.path(output_dir, "Figure2_Transformations.png"),
+    width = 1800, height = 1200, res = 200)
+plot(model_raw$loss, type = "l", col = "red", lwd = 2,
+     log = "x", xlab = "Loss record index (log scale)",
+     ylab = "Training MSE", main = "Gradient Descent Convergence")
+lines(model_scaled$loss, col = "blue", lwd = 2)
+lines(model_log$loss, col = "darkgreen", lwd = 2)
+legend("topright", legend = c("Raw", "Standardized", "Log"),
+       col = c("red", "blue", "darkgreen"), lty = 1, lwd = 2)
+dev.off()
+
+```
+
+
+# 1.6: Univariate vs. Multivariate Coefficients
+```{r}
+# Original features: retain the baseline rate except for the Age trial.
+q6_lr <- 1e-6
+q6_age_lr <- 1e-5 # initial setting : 1e-6
+q6_max_iter <- 1000000
+feature_names <- colnames(x_train)
+uni_results <- data.frame()
+q6_losses <- setNames(vector("list", length(feature_names)), feature_names)
+
+for (j in seq_along(feature_names)) {
+  feature <- feature_names[j]
+  x <- matrix(x_train[, j], ncol = 1)
+
+  model_lr <- if (feature == "Age") q6_age_lr else q6_lr
+  gd <- gradient_descent(x, y_train, lr = model_lr,
+                         max_iter = q6_max_iter)
+  result <- evaluate_model(x, y_train, gd$beta)
+  q6_losses[[feature]] <- gd$loss
+  finite_run <- all(is.finite(gd$beta)) && all(is.finite(gd$loss)) &&
+    all(is.finite(result))
+  # Loss index 1 is before any updates; the final loss is appended.
+  first_positive <- which(is.finite(gd$loss) &
+    gd$loss < mean((y_train - mean(y_train))^2))
+  first_positive <- if (length(first_positive)) first_positive[1] - 1 else NA_integer_
+
+  lm_uni <- lm(as.formula(paste("Strength ~", feature)),
+               data = train_data)
+
+  uni_results <- rbind(uni_results, data.frame(
+    Feature = feature,
+    Learning_Rate = model_lr,
+    Iterations = if (all(is.finite(gd$beta))) length(gd$loss) - 1 else length(gd$loss),
+    Status = if (finite_run) "finite" else "non-finite",
+    First_Positive_R2_Iteration = first_positive,
+    GD_R2 = unname(result["R2"]),
+    GD_MSE = unname(result["MSE"]),
+    Univariate_Coefficient = unname(coef(lm_uni)[2]),
+    Multivariate_Coefficient = unname(coef(lm_raw)[feature])
+  ))
+}
+
+print(uni_results)
+q6_positive_count <- sum(is.finite(uni_results$GD_R2) &
+  uni_results$GD_R2 > 0 & uni_results$Status == "finite")
+cat("Positive R2 models:", q6_positive_count, "\n")
+if (q6_positive_count < 2) {
+  cat("Q6 training target not yet met: review learning rate or iteration limit.\n")
+}
+
+# Q6.2: use explicit column names so added diagnostics do not change the export.
+write.csv(uni_results[, c("Feature", "Univariate_Coefficient",
+                          "Multivariate_Coefficient")],
+          file.path(output_dir, "Q6_2_Coefficients.csv"),
+          row.names = FALSE)
+write.csv(uni_results, file.path(output_dir, "Q6_Training_Results.csv"),
+          row.names = FALSE)
+
+
+# Optimal univariate MSE and R2 alongside existing GD exports.
+q6_ols_results <- do.call(rbind, lapply(feature_names, function(feature) {
+  fit <- lm(reformulate(feature, response = "Strength"), data = train_data)
+  scores <- get_scores(fit, train_data)
+  data.frame(Feature = feature, Train_MSE = unname(scores["MSE"]),
+             Train_R2 = unname(scores["R2"]))
+}))
+write.csv(q6_ols_results,
+          file.path(output_dir, "Q6_Optimal_Univariate_Results.csv"),
+          row.names = FALSE)
+
+# Training feature correlations for the coefficient discussion.
+q6_correlations <- cor(train_data[, 1:8])
+write.csv(data.frame(Feature = rownames(q6_correlations), q6_correlations,
+                     row.names = NULL, check.names = FALSE),
+          file.path(output_dir, "Training_Feature_Correlations.csv"),
+          row.names = FALSE)
+
+```
+
+
+# 1.7: Statistical Significance
+```{r}
+# 1. Separate features and target
+x <- data[, 1:8]
+y <- data[, 9]
+
+# 2. Split data according to professor's instructions
+test_idx <- 501:630
+train_idx <- setdiff(seq_len(nrow(data)), test_idx)
+
+x_train <- x[train_idx, ]
+y_train <- y[train_idx]
+
+# 3. Original linear regression
+train_raw <- data.frame(
+  Strength = y_train,
+  x_train,
+  check.names = TRUE
+)
+
+lm_raw <- lm(Strength ~ ., data = train_raw)
+
+# 4. Standardized linear regression
+x_scaled <- as.data.frame(scale(x_train))
+names(x_scaled) <- names(x_train)
+
+lm_scaled <- lm(
+  Strength ~ .,
+  data = data.frame(Strength = y_train, x_scaled)
+)
+
+# 5. Log-transformed linear regression
+x_log <- as.data.frame(log1p(x_train))
+names(x_log) <- names(x_train)
+
+lm_log <- lm(
+  Strength ~ .,
+  data = data.frame(Strength = y_train, x_log)
+)
+
+# 6. Extract p-values
+p_table <- data.frame(
+  Feature = names(coef(lm_raw)),
+  Raw = summary(lm_raw)$coefficients[, 4],
+  Standardized = summary(lm_scaled)$coefficients[, 4],
+  Log = summary(lm_log)$coefficients[, 4],
+  row.names = NULL
+)
+
+print(p_table, digits = 6)
+
+
+# P-values for all three feature configurations.
+write.csv(p_table, file.path(output_dir, "Q7_P_Values.csv"),
+          row.names = FALSE)
+
+# Record the software environment used for this run.
+writeLines(capture.output(sessionInfo()),
+           file.path(output_dir, "sessionInfo.txt"))
+
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,3 @@
+"Model","Learning_Rate","Max_Iterations","Updates","Status","Final_Train_MSE","Final_Train_R2","First_Positive_R2_Iteration"
+"Raw",1e-08,1e+05,100000,"finite",107.501415564087,0.611928617326057,136
+"Standardized",0.01,10000,10000,"finite",104.14385557845,0.62404913629039,56
